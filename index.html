@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>DISRUPTIVE TYPE [2020 EXHIBITION]</title>
+    <meta
+      name="description"
+      content="DISRUPTIVE TYPE [2020 EXHIBITION] is a virtual exhibition space showcasing the artforms within 'disruptive' type design."
+    />
+    <meta name="theme-color" content="#ffffff" />
+    <link rel="icon" href="/favicon.ico" />
+    <link rel="preload" href="/assets/exhibition.glb" as="fetch" crossorigin />
+  </head>
+  <body>
+    <canvas id="world" aria-label="3D exhibition space"></canvas>
+
+    <!-- Main menu: laid out on Unity's 1280x800 reference canvas, scaled to fit -->
+    <section id="menu" class="screen" aria-label="Main menu">
+      <div class="frame">
+        <div id="menu-main" class="group">
+          <img class="bg" src="/assets/ui/disruptive.type_BG.webp" alt="Disruptive Type — ©2020 exhibition. Virtual exhibition space showcasing the artforms within 'disruptive' type design. Use mouse and keyboard to navigate (A, W, S, D or arrows)." />
+          <button id="btn-start" class="img-btn" aria-label="Start">
+            <img src="/assets/ui/logotype_complete_-06.webp" alt="" />
+          </button>
+          <button id="btn-info" class="img-btn" aria-label="More info">
+            <img src="/assets/ui/logotype_complete_-01.webp" alt="" />
+          </button>
+          <div id="load" aria-live="polite"><span id="load-bar"></span></div>
+        </div>
+        <div id="menu-info" class="group" hidden>
+          <img class="bg" src="/assets/ui/moreinfo_thanksto.webp" alt="About, collab and thanks to the contributing type designers." />
+          <button id="btn-back" class="img-btn" aria-label="Back">
+            <img src="/assets/ui/backbutton-10.webp" alt="" />
+          </button>
+        </div>
+      </div>
+      <p id="touch-hint">Drag left side to walk · drag right side to look · tap to jump</p>
+    </section>
+
+    <!-- In-exhibition HUD -->
+    <section id="hud" hidden>
+      <img id="ui-top" src="/assets/ui/interface_-14.webp" alt="" />
+      <img id="crosshair" src="/assets/ui/crosshair_blue.webp" alt="" />
+      <img id="tag" alt="" />
+      <div id="joystick" aria-hidden="true"><div id="stick"></div></div>
+    </section>
+
+    <section id="pause" class="screen" hidden aria-label="Paused">
+      <div class="pause-card">
+        <button id="btn-resume" class="txt-btn">↳ CONTINUE</button>
+        <button id="btn-menu" class="txt-btn">BACK TO MENU</button>
+      </div>
+    </section>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
