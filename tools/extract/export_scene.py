@@ -249,7 +249,16 @@ for pid, o in lvl.objects.items():
         tr = GO_TR[t['m_GameObject']['m_PathID']]
         if active_in_hierarchy(tr):
             M = world_matrix(tr)
-            fwd = C @ (M[:3, :3] @ np.array([0, 0, 1.0]))
+            # FirstPersonAIO resets the camera's local yaw on Start and steers the body instead,
+            # so the visitor faces the root (body) forward, not the camera's saved yaw.
+            # (Verified against the running original build.)
+            root = tr
+            while TR[root]['m_Father']['m_PathID']:
+                root = TR[root]['m_Father']['m_PathID']
+            R = world_matrix(root)
+            fwd = C @ (R[:3, :3] @ np.array([0, 0, 1.0]))
+            fwd[1] = 0
+            fwd /= np.linalg.norm(fwd)
             pos = C @ M[:3, 3]
             player = dict(eye=pos.round(4).tolist(), forward=fwd.round(4).tolist(), fov=t['field of view'],
                           near=t['near clip plane'], far=t['far clip plane'])

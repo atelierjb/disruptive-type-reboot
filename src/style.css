@@ -1,8 +1,10 @@
 :root {
   --blue: #0000fe;
   --white: #fff;
-  /* set from JS: scale of the 1280x800 Unity reference canvas */
+  /* set from JS: scale of the 1280x800 Unity reference canvas, and the device pixel ratio
+     (Unity rendered its canvas at device resolution, so "constant pixel size" UI is device px) */
   --ui: 1;
+  --dpr: 1;
 }
 
 * {
@@ -158,28 +160,29 @@ body {
   z-index: 5;
   pointer-events: none;
 }
-/* Unity: 2097x181 image at 0.45 scale, 58px from the top, constant pixel size */
+/* Unity: canvas scales with screen width (1280 reference); 2097x181 image at 0.45, 58 units
+   below the top edge. So: 943.7/1280 of the viewport width, centred 58/1280 vw from the top. */
 #ui-top {
   position: absolute;
-  top: 58px;
+  top: calc(58vw / 12.8);
   left: 50%;
-  width: min(943.7px, 92vw);
+  width: calc(943.7vw / 12.8);
   transform: translate(-50%, -50%);
 }
 #crosshair {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 12px;
-  height: 12px;
+  width: calc(17px / var(--dpr));
+  height: calc(17px / var(--dpr));
   transform: translate(-50%, -50%);
 }
-/* Unity: 922x440 tag at 0.7 scale, 250px below centre */
+/* Unity: constant-pixel-size canvas, 922x440 tag at 0.7 scale, 250px below centre (device px) */
 #tag {
   position: absolute;
   left: 50%;
-  top: calc(50% + 250px);
-  width: min(645.4px, 92vw);
+  top: calc(50% + 250px / var(--dpr));
+  width: min(645.4px / var(--dpr), 92vw);
   transform: translate(-50%, -50%);
   opacity: 0;
   transition: opacity 0.18s ease;
@@ -193,7 +196,7 @@ body {
     top: auto;
     bottom: 12px;
     transform: translate(-50%, 0);
-    width: min(645px, 92vw, 90vh);
+    width: min(645.4px / var(--dpr), 92vw, 90vh);
   }
 }
 

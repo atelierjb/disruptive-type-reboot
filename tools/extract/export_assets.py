@@ -17,15 +17,25 @@ for fn in ('sharedassets0.assets','sharedassets1.assets'):
             for name,data in d.samples.items():
                 open(f'{OUT}/audio/{d.m_Name}.wav','wb').write(data); print('audio',d.m_Name,pid,len(data))
         elif t=='Cubemap':
+            # The sky is an HDR cubemap stored as RGBM in DXT5 (m_LightmapFormat 5 = RGBMEncoded).
+            # Gamma-space decode: rgb * alpha * 5. We then bake the AmbienceExposure skybox material
+            # (tint * 2 [unity_ColorSpaceDouble in gamma] * exposure) and clamp, which is exactly
+            # what reached the screen in the original.
+            import texture2ddecoder, numpy as np
             tt=o.read_typetree()
-            print('cubemap',tt['m_Name'],tt['m_TextureFormat'],tt['m_Width'],tt['m_MipCount'],len(tt['image data']), tt.get('m_StreamData'))
-            import texture2ddecoder
             data=tt['image data']; w=tt['m_Width']
             face=len(data)//6
+            sky = np.array([0.515, 0.498, 0.481]) * 2 * 0.9
             for i in range(6):
-                fd=data[i*face:i*face+w*w]  # DXT5 = 1 byte/pixel at mip0
-                raw=texture2ddecoder.decode_bc3(fd,w,w)
-                Image.frombytes('RGBA',(w,w),raw,'raw','BGRA').convert('RGB').save(f'{OUT}/cube/face{i}.png')
+                raw=texture2ddecoder.decode_bc3(data[i*face:i*face+w*w],w,w)  # mip0: 1 byte/px
+                px=np.frombuffer(raw,np.uint8).reshape(w,w,4).astype(np.float32)/255
+                rgb=px[...,[2,1,0]] * px[...,3:4] * 5 * sky
+                # Measured against screenshots of the running original, Unity's WebGL output was
+                # softer than the straight decode (less clipping, less saturated): fitted as
+                # 0.79 * x^0.82, which matches the reference pixels to within a few levels.
+                rgb = 0.79 * np.power(rgb, 0.82)
+                Image.fromarray((np.clip(rgb,0,1)*255+0.5).astype(np.uint8)).save(f'{OUT}/cube/face{i}.png')
+            print('cubemap', tt['m_Name'], w)
         elif t=='Material' and 'Aluminum' in o.read().m_Name:
             tt=o.read_typetree()
             for k,v in tt['m_SavedProperties']['m_TexEnvs']:

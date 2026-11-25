@@ -21,10 +21,14 @@ const isTouch = matchMedia('(pointer: coarse)').matches;
 
 // ---------- menu scaling (Unity CanvasScaler: 1280x800 reference) ----------
 function fitMenu() {
-  // Unity matched width on a 1280x800 canvas. The artwork's content sits inside ~960px of it
-  // (the rest is white margin), so fit that to give phones bigger tap targets.
-  const s = Math.min(window.innerWidth / 960, window.innerHeight / 800);
-  document.documentElement.style.setProperty('--ui', String(s));
+  // Unity's menu canvas scaled with screen width (1280 reference). On portrait phones (which the
+  // original didn't support) fit the ~960px of actual artwork instead, for usable tap targets.
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  const s = w >= h ? w / 1280 : Math.min(w / 960, h / 800);
+  const root = document.documentElement.style;
+  root.setProperty('--ui', String(s));
+  root.setProperty('--dpr', String(window.devicePixelRatio || 1));
 }
 fitMenu();
 addEventListener('resize', fitMenu);
@@ -65,13 +69,23 @@ const ready = createWorld(canvas, (p) => load.style.setProperty('--p', p.toFixed
     throw err;
   });
 
+// requestPointerLock returns a promise in modern browsers and rejects when the lock is refused
+// (iframes, embeds, Safari right after Esc). Fall back to drag-to-look instead of erroring.
+function lockPointer() {
+  const result = canvas.requestPointerLock?.() as unknown as Promise<void> | undefined;
+  result?.catch?.(() => {
+    dragLook = true;
+  });
+}
+
 // ---------- state ----------
+let dragLook = false;
 type Mode = 'menu' | 'exhibition' | 'paused';
 let mode: Mode = 'menu';
 
 async function enter() {
   footsteps.unlock(); // inside the click gesture
-  if (!isTouch) canvas.requestPointerLock?.();
+  if (!isTouch) lockPointer();
   await ready;
   menu.classList.add('leaving');
   setTimeout(() => (menu.hidden = true), 500);
@@ -113,7 +127,7 @@ function toMenu() {
 
 btnStart.addEventListener('click', enter);
 $('btn-resume').addEventListener('click', () => {
-  if (!isTouch) canvas.requestPointerLock?.();
+  if (!isTouch) lockPointer();
   resume();
 });
 $('btn-menu').addEventListener('click', toMenu);
@@ -121,7 +135,6 @@ $('btn-menu').addEventListener('click', toMenu);
 // ---------- desktop input ----------
 // If the browser refuses pointer lock (iframes, embeds, Safari right after Esc),
 // fall back to click-and-drag looking instead of trapping the visitor on the pause screen.
-let dragLook = false;
 let hadLock = false;
 document.addEventListener('pointerlockchange', () => {
   if (document.pointerLockElement === canvas) {
@@ -151,7 +164,8 @@ addEventListener('keydown', (e) => {
 addEventListener('keyup', (e) => player?.keys.delete(e.code));
 addEventListener('blur', () => player?.keys.clear());
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) doPause();
+  // ignore momentary flickers (screenshots, OS overlays); a real tab switch stays hidden
+  if (document.hidden) setTimeout(() => document.hidden && doPause(), 200);
 });
 
 // ---------- touch: left half = move joystick, right half = look, tap right = jump ----------
@@ -217,22 +231,57 @@ function resize() {
 addEventListener('resize', resize);
 ready.then(resize);
 
-let slowFrames = 0;
-let fastFrames = 0;
-function adapt(dt: number) {
-  // drop resolution if we're consistently under ~50fps, recover slowly when there's headroom
-  if (dt > 0.02) slowFrames++;
-  else if (dt < 0.012) fastFrames++;
-  if (slowFrames > 45 && ratio > 0.75) {
-    ratio = Math.max(0.75, ratio - 0.25);
-    resize();
-    slowFrames = fastFrames = 0;
-  } else if (fastFrames > 600 && ratio < maxRatio) {
-    ratio = Math.min(maxRatio, ratio + 0.25);
-    resize();
-    slowFrames = fastFrames = 0;
+// Adaptive resolution, driven by measured GPU time where the browser exposes it. Frame intervals
+// alone can't tell a struggling GPU from a browser capping the frame rate (background pane,
+// battery saver), and dropping resolution in the latter just makes the room blurrier.
+let gpuTimer: { gl: WebGL2RenderingContext; ext: { TIME_ELAPSED_EXT: number; GPU_DISJOINT_EXT: number } } | null = null;
+let pendingQuery: WebGLQuery | null = null;
+const samples: number[] = [];
+let headroom = 0;
+
+ready.then((w) => {
+  const gl = w.renderer.getContext() as WebGL2RenderingContext;
+  const ext = gl.getExtension('EXT_disjoint_timer_query_webgl2');
+  if (ext) gpuTimer = { gl, ext };
+});
+
+function setRatio(next: number) {
+  ratio = next;
+  resize();
+  headroom = 0;
+}
+
+/** cost of one frame in ms: GPU time if measurable, otherwise the frame interval */
+function judge(costMs: number, budgetMs: number, cheapMs: number) {
+  samples.push(costMs);
+  if (samples.length < 15) return;
+  const median = [...samples].sort((a, b) => a - b)[7];
+  samples.length = 0;
+  if (median > budgetMs && ratio > 0.75) setRatio(Math.max(0.75, ratio - 0.25));
+  else if (median < cheapMs && ratio < maxRatio && ++headroom > 8) setRatio(Math.min(maxRatio, ratio + 0.25));
+}
+
+function renderTimed(w: World, dt: number) {
+  const t = gpuTimer;
+  if (!t) {
+    w.renderer.render(w.scene, w.camera);
+    judge(dt * 1000, 20, 12);
+    return;
   }
-  if (slowFrames + fastFrames > 600) slowFrames = fastFrames = 0;
+  const { gl, ext } = t;
+  if (pendingQuery && gl.getQueryParameter(pendingQuery, gl.QUERY_RESULT_AVAILABLE)) {
+    if (!gl.getParameter(ext.GPU_DISJOINT_EXT)) judge(gl.getQueryParameter(pendingQuery, gl.QUERY_RESULT) / 1e6, 12, 4);
+    gl.deleteQuery(pendingQuery);
+    pendingQuery = null;
+  }
+  if (pendingQuery) {
+    w.renderer.render(w.scene, w.camera);
+    return;
+  }
+  pendingQuery = gl.createQuery();
+  gl.beginQuery(ext.TIME_ELAPSED_EXT, pendingQuery!);
+  w.renderer.render(w.scene, w.camera);
+  gl.endQuery(ext.TIME_ELAPSED_EXT);
 }
 
 // ---------- loop ----------
@@ -244,7 +293,6 @@ function frame(now: number) {
   player.update(dt);
   exhibits.update(player.position);
   footsteps.update(player.stride);
-  world.renderer.render(world.scene, world.camera);
-  adapt(dt);
+  renderTimed(world, dt);
   requestAnimationFrame(frame);
 }

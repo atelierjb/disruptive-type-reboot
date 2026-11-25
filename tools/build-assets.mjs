@@ -73,33 +73,31 @@ for (const f of fs.readdirSync(path.join(SRC, 'ui'))) {
 }
 
 // ---------- material textures ----------
-// Unity Standard: _MetallicGlossMap R=metal A=smoothness, _OcclusionMap G=AO.
-// glTF/three:      roughnessMap G, metalnessMap B, aoMap R.  Pack into one ORM image.
 {
+  // Unity Standard: _MetallicGlossMap R=metal A=smoothness, _OcclusionMap G=AO.
+  // three: roughnessMap G, metalnessMap B, aoMap R. Pack into one ORM image.
   const src = path.join(SRC, 'tex', 'copper common metalness.png');
   const size = 1024;
-  const { data, info } = await sharp(src).resize(size, size).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const { data } = await sharp(src).resize(size, size).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   const orm = Buffer.alloc(size * size * 3);
   const glossMapScale = 0.885;
   for (let i = 0; i < size * size; i++) {
-    const r = data[i * 4], g = data[i * 4 + 1], a = data[i * 4 + 3];
-    orm[i * 3] = g; // AO
-    orm[i * 3 + 1] = Math.round(255 * (1 - (a / 255) * glossMapScale)); // roughness
-    orm[i * 3 + 2] = r; // metalness
+    orm[i * 3] = data[i * 4 + 1]; // AO
+    orm[i * 3 + 1] = Math.round(255 * (1 - (data[i * 4 + 3] / 255) * glossMapScale)); // roughness
+    orm[i * 3 + 2] = data[i * 4]; // metalness
   }
   await sharp(orm, { raw: { width: size, height: size, channels: 3 } }).webp({ quality: 90 }).toFile(path.join(OUT, 'tex', 'metal_orm.webp'));
   await sharp(src).resize(size, size).removeAlpha().webp({ quality: 88 }).toFile(path.join(OUT, 'tex', 'metal_base.webp'));
   await sharp(path.join(SRC, 'tex', 'glass generic slightly dusty diffuse.png')).resize(1024, 1024).webp({ quality: 85, alphaQuality: 90 }).toFile(path.join(OUT, 'tex', 'glass.webp'));
-  await sharp(path.join(SRC, 'tex', 'common huge bumps normal.png')).resize(512, 512).removeAlpha().webp({ quality: 90 }).toFile(path.join(OUT, 'tex', 'detail_normal.webp'));
 }
 
 // ---------- sky cubemap ----------
-// Unity faces: +X -X +Y -Y +Z -Z, decoded bottom-up. We mirrored the world in X, so +X/-X swap
-// and every face is mirrored horizontally; the vertical flip undoes the bottom-up storage.
+// Unity faces: +X -X +Y -Y +Z -Z, side faces stored upright. We mirrored the world in X,
+// so +X/-X swap and every face is mirrored horizontally.
 {
   const order = { px: 1, nx: 0, py: 2, ny: 3, pz: 4, nz: 5 };
   for (const [k, i] of Object.entries(order)) {
-    await sharp(path.join(SRC, 'cube', `face${i}.png`)).flip().flop().resize(1024, 1024).webp({ quality: 92 }).toFile(path.join(OUT, 'sky', `${k}.webp`));
+    await sharp(path.join(SRC, 'cube', `face${i}.png`)).flop().resize(1024, 1024).webp({ quality: 92 }).toFile(path.join(OUT, 'sky', `${k}.webp`));
   }
 }
 
