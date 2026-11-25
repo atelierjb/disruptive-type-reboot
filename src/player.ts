@@ -9,8 +9,10 @@ import type { MeshBVH } from 'three-mesh-bvh';
 export const TUNING = {
   walkSpeed: 7,
   sprintSpeed: 10,
-  jumpSpeed: 8,
-  gravity: -9.81 * 2.2, // AIO adds extra gravity on top of Unity's; this matches the feel
+  // Jumps are set by how high they go; the launch speed is derived from gravity.
+  // The original (jump 8 against heavy gravity) only cleared ~1.5 units; this is boosted.
+  jumpHeight: 3.75, // world units (the player is 2 tall)
+  gravity: -15, // lighter than before (-21.6) for a floatier arc
   radius: 0.4,
   halfSegment: 0.6, // (height 2 - 2*radius) / 2
   eyeHeight: 0.9,
@@ -110,7 +112,7 @@ export class Player {
     this.velocity.z += (wish.z - this.velocity.z) * a;
 
     if (this.jumpQueued && this.onGround) {
-      this.velocity.y = TUNING.jumpSpeed;
+      this.velocity.y = Math.sqrt(2 * -TUNING.gravity * TUNING.jumpHeight);
       this.onGround = false;
     }
     this.jumpQueued = false;
