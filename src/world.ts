@@ -3,6 +3,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { MeshBVH } from 'three-mesh-bvh';
+import { createCeilingMirror, MIRROR_LAYER, type CeilingMirror } from './ceiling';
 
 export interface Trigger {
   name: string;
@@ -34,6 +35,7 @@ export interface World {
   camera: THREE.PerspectiveCamera;
   collider: MeshBVH;
   data: SceneData;
+  ceiling: CeilingMirror;
 }
 
 const A = '/assets';
@@ -57,6 +59,9 @@ const raw = (r: number, g: number, b: number) => new THREE.Color().setRGB(r, g, 
 const UNITY_LIGHT_SCALE = 2.66; // the three realtime suns
 const UNITY_SPEC_SCALE = 0.526; // specular term relative to three's light intensity
 const UNITY_FILL_SCALE = 2.9; // the four fill lights Unity folded into spherical harmonics
+
+/** Ceiling emission. The original was 0.519 (a mid grey); raised by request for a lighter ceiling. */
+const CEILING_GLOW = 0.75;
 
 /**
  * Unity "High" quality (the WebGL default for this build): shadows only exist within 40 units of
@@ -214,10 +219,11 @@ export async function createWorld(canvas: HTMLCanvasElement, onProgress: (p: num
       metalness: 0.16,
       roughness: 0.2,
     }),
+    // Only used on the ceiling slab. Emission raised from the original 0.519 for a lighter ceiling.
     'New Material 1': new THREE.MeshStandardMaterial({
       name: 'wall-2',
       color: raw(0.811, 0.811, 0.811),
-      emissive: raw(0.519, 0.519, 0.519),
+      emissive: raw(CEILING_GLOW, CEILING_GLOW, CEILING_GLOW),
       metalness: 0.16,
       roughness: 0.2,
     }),
@@ -234,6 +240,8 @@ export async function createWorld(canvas: HTMLCanvasElement, onProgress: (p: num
   const bySanitized = new Map(Object.entries(materials).map(([k, m]) => [THREE.PropertyBinding.sanitizeNodeName(k), m]));
 
   const bounds = new THREE.Box3();
+  const ceilingBounds = new THREE.Box3();
+  const occluding: THREE.Mesh[] = [];
   // bake node matrices (quantization stores offsets on nodes) before freezing them
   visual.scene.updateMatrixWorld(true);
   visual.scene.traverse((o) => {
@@ -250,9 +258,23 @@ export async function createWorld(canvas: HTMLCanvasElement, onProgress: (p: num
     if (isGlass) mesh.renderOrder = 1;
     mesh.matrixAutoUpdate = false;
     bounds.expandByObject(mesh);
+    // ceiling mirror: sculptures are reflected, walls hide what's behind them, the
+    // ceiling slab itself ('New Material 1' is only used there) defines the mirror plane
+    if (mesh.material === materials['New Material 1']) ceilingBounds.expandByObject(mesh);
+    else if (mesh.name.startsWith('sculpture')) mesh.layers.enable(MIRROR_LAYER);
+    else if (!isGlass) occluding.push(mesh);
   });
   visual.scene.matrixAutoUpdate = false;
   scene.add(visual.scene);
+
+  // depth-only copies of the walls, seen only by the mirror camera (a few thousand triangles)
+  const occluder = new THREE.MeshBasicMaterial({ colorWrite: false, side: THREE.DoubleSide });
+  for (const mesh of occluding) {
+    const copy = new THREE.Mesh(mesh.geometry, occluder);
+    copy.layers.set(MIRROR_LAYER);
+    copy.matrixAutoUpdate = false;
+    mesh.add(copy);
+  }
 
   // ---- lights ----
   // The scene was never lightmapped, so Unity treated its "Baked" lights as realtime too.
@@ -268,12 +290,15 @@ export async function createWorld(canvas: HTMLCanvasElement, onProgress: (p: num
       sh.coefficients[i].add(new THREE.Vector3(...l.color).multiplyScalar(l.intensity * UNITY_FILL_SCALE * basis[i]));
     }
   }
-  scene.add(new THREE.LightProbe(sh, 1));
+  const probe = new THREE.LightProbe(sh, 1);
+  probe.layers.enable(MIRROR_LAYER); // lights are culled by layer too
+  scene.add(probe);
 
   const center = bounds.getCenter(new THREE.Vector3());
   const radius = bounds.getBoundingSphere(new THREE.Sphere()).radius;
   for (const l of data.lights.filter((l) => l.bake === 4 || l.bake === 1)) {
     const light = new THREE.DirectionalLight(raw(...l.color), l.intensity * UNITY_LIGHT_SCALE);
+    light.layers.enable(MIRROR_LAYER);
     const dir = new THREE.Vector3(...l.dir).normalize();
     light.position.copy(center).addScaledVector(dir, -radius * 1.5);
     light.target.position.copy(center);
@@ -291,6 +316,11 @@ export async function createWorld(canvas: HTMLCanvasElement, onProgress: (p: num
     scene.add(light, light.target);
   }
   renderer.shadowMap.needsUpdate = true;
+
+  const ceiling = createCeilingMirror(ceilingBounds, camera);
+  const buffer = renderer.getDrawingBufferSize(new THREE.Vector2());
+  ceiling.setSize(buffer.x, buffer.y);
+  scene.add(ceiling.mesh);
 
   // ---- collision: building exact, sculptures simplified, plus the ground plane ----
   const geoms: THREE.BufferGeometry[] = [];
@@ -328,5 +358,5 @@ export async function createWorld(canvas: HTMLCanvasElement, onProgress: (p: num
   // geometry/texture uploads and the one-time shadow passes don't land on the menu fade-out.
   renderer.render(scene, camera);
 
-  return { renderer, scene, camera, collider, data };
+  return { renderer, scene, camera, collider, data, ceiling };
 }

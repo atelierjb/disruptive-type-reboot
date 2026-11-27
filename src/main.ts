@@ -236,6 +236,7 @@ function resize() {
   if (!world) return;
   world.renderer.setPixelRatio(ratio);
   world.renderer.setSize(innerWidth, innerHeight, false);
+  world.ceiling.setSize(innerWidth * ratio, innerHeight * ratio);
   world.camera.aspect = innerWidth / innerHeight;
   world.camera.updateProjectionMatrix();
 }
