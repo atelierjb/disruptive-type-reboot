@@ -36,6 +36,21 @@ const right = new THREE.Vector3();
 const before = new THREE.Vector3();
 const euler = new THREE.Euler(0, 0, 0, 'YXZ');
 
+/** capsule vs BVH: push the segment out of every triangle closer than the radius.
+ *  Hoisted so the up-to-8 sub-steps per frame don't allocate new closures each time. */
+const capsuleCast: Parameters<MeshBVH['shapecast']>[0] = {
+  intersectsBounds: (box) => box.intersectsBox(tmpBox),
+  intersectsTriangle: (tri) => {
+    const dist = tri.closestPointToSegment(tmpSeg, triPoint, capPoint);
+    if (dist < TUNING.radius) {
+      const depth = TUNING.radius - dist;
+      const dir = capPoint.sub(triPoint).normalize();
+      tmpSeg.start.addScaledVector(dir, depth);
+      tmpSeg.end.addScaledVector(dir, depth);
+    }
+  },
+};
+
 export class Player {
   /** capsule centre */
   readonly position = new THREE.Vector3();
@@ -121,25 +136,13 @@ export class Player {
     before.copy(this.position);
     this.position.addScaledVector(this.velocity, dt);
 
-    // capsule vs BVH: push the segment out of every triangle closer than the radius
     tmpSeg.start.set(this.position.x, this.position.y + TUNING.halfSegment, this.position.z);
     tmpSeg.end.set(this.position.x, this.position.y - TUNING.halfSegment, this.position.z);
     tmpBox.makeEmpty().expandByPoint(tmpSeg.start).expandByPoint(tmpSeg.end);
     tmpBox.min.addScalar(-TUNING.radius);
     tmpBox.max.addScalar(TUNING.radius);
 
-    this.collider.shapecast({
-      intersectsBounds: (box) => box.intersectsBox(tmpBox),
-      intersectsTriangle: (tri) => {
-        const dist = tri.closestPointToSegment(tmpSeg, triPoint, capPoint);
-        if (dist < TUNING.radius) {
-          const depth = TUNING.radius - dist;
-          const dir = capPoint.sub(triPoint).normalize();
-          tmpSeg.start.addScaledVector(dir, depth);
-          tmpSeg.end.addScaledVector(dir, depth);
-        }
-      },
-    });
+    this.collider.shapecast(capsuleCast);
 
     // resolved centre = midpoint of the pushed segment
     delta.addVectors(tmpSeg.start, tmpSeg.end).multiplyScalar(0.5).sub(this.position);

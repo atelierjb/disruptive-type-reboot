@@ -93,13 +93,21 @@ function unityStandard(material: THREE.Material) {
       .replace(
         '#include <shadowmap_pars_fragment>',
         `#include <shadowmap_pars_fragment>
-        float unityShadowFade( float shadow ) {
-          return mix( shadow, 1.0, smoothstep( ${SHADOW_FADE_START.toFixed(1)}, ${SHADOW_DISTANCE.toFixed(1)}, length( vViewPosition ) ) );
+        float unityShadowFade() {
+          return smoothstep( ${SHADOW_FADE_START.toFixed(1)}, ${SHADOW_DISTANCE.toFixed(1)}, length( vViewPosition ) );
         }`,
       )
       .replace(
         '#include <lights_fragment_begin>',
-        lights.replace(SHADOW_LINE, SHADOW_LINE.replace('? getShadow(', '? unityShadowFade( getShadow(').replace(') : 1.0;', ') ) : 1.0;')),
+        // Fade computed once per fragment; past the shadow distance the ternary skips the shadow
+        // lookups entirely (GLSL only evaluates the chosen branch) instead of sampling and discarding.
+        'float unityFadeAmount = unityShadowFade();\n' +
+          lights.replace(
+            SHADOW_LINE,
+            SHADOW_LINE.replace('( directLight.visible && receiveShadow )', '( directLight.visible && receiveShadow && unityFadeAmount < 1.0 )')
+              .replace('? getShadow(', '? mix( getShadow(')
+              .replace(') : 1.0;', '), 1.0, unityFadeAmount ) : 1.0;'),
+          ),
       )
       .replace(
         '#include <lights_physical_pars_fragment>',
@@ -138,7 +146,7 @@ export async function createWorld(canvas: HTMLCanvasElement, onProgress: (p: num
   const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
 
   // ---- progress over the parallel downloads ----
-  const weights: Record<string, number> = { glb: 3300, col: 450, tex: 900, sky: 340 };
+  const weights: Record<string, number> = { glb: 3300, col: 450, tex: 310, sky: 340 };
   const done: Record<string, number> = {};
   const tick = (k: string, f = 1) => {
     done[k] = f;
@@ -294,7 +302,11 @@ export async function createWorld(canvas: HTMLCanvasElement, onProgress: (p: num
     // normalized int16 (KHR_mesh_quantization) and writing world coords back would clamp to [-1, 1].
     const p = mesh.geometry.getAttribute('position');
     const f = new Float32Array(p.count * 3);
-    for (let i = 0; i < p.count; i++) f.set([p.getX(i), p.getY(i), p.getZ(i)], i * 3);
+    for (let i = 0; i < p.count; i++) {
+      f[i * 3] = p.getX(i);
+      f[i * 3 + 1] = p.getY(i);
+      f[i * 3 + 2] = p.getZ(i);
+    }
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(f, 3));
     g.setIndex(mesh.geometry.getIndex()!.clone());
@@ -312,6 +324,9 @@ export async function createWorld(canvas: HTMLCanvasElement, onProgress: (p: num
   // warm up shaders so the first frame in the room doesn't hitch
   camera.position.set(...data.player.eye);
   await renderer.compileAsync(scene, camera);
+  // compileAsync only builds programs. Render once now (hidden behind the opaque menu) so the
+  // geometry/texture uploads and the one-time shadow passes don't land on the menu fade-out.
+  renderer.render(scene, camera);
 
   return { renderer, scene, camera, collider, data };
 }

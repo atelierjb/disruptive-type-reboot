@@ -88,7 +88,8 @@ for (const f of fs.readdirSync(path.join(SRC, 'ui'))) {
   }
   await sharp(orm, { raw: { width: size, height: size, channels: 3 } }).webp({ quality: 90 }).toFile(path.join(OUT, 'tex', 'metal_orm.webp'));
   await sharp(src).resize(size, size).removeAlpha().webp({ quality: 88 }).toFile(path.join(OUT, 'tex', 'metal_base.webp'));
-  await sharp(path.join(SRC, 'tex', 'glass generic slightly dusty diffuse.png')).resize(1024, 1024).webp({ quality: 85, alphaQuality: 90 }).toFile(path.join(OUT, 'tex', 'glass.webp'));
+  // ~5% opaque dust noise: invisible above 512px, and noise is what made 1024px cost 800 KB
+  await sharp(path.join(SRC, 'tex', 'glass generic slightly dusty diffuse.png')).resize(512, 512).webp({ quality: 85, alphaQuality: 90 }).toFile(path.join(OUT, 'tex', 'glass.webp'));
 }
 
 // ---------- sky cubemap ----------

@@ -82,11 +82,21 @@ function lockPointer() {
 let dragLook = false;
 type Mode = 'menu' | 'exhibition' | 'paused';
 let mode: Mode = 'menu';
+let entering = false;
+/** the one pending frame request; resume() replaces it so only one loop ever runs */
+let raf = 0;
 
 async function enter() {
+  // Start stays clickable while loading; a second click must not start a second render loop.
+  if (entering || mode !== 'menu') return;
+  entering = true;
   footsteps.unlock(); // inside the click gesture
   if (!isTouch) lockPointer();
-  await ready;
+  try {
+    await ready;
+  } finally {
+    entering = false;
+  }
   menu.classList.add('leaving');
   setTimeout(() => (menu.hidden = true), 500);
   hud.hidden = false;
@@ -98,7 +108,8 @@ function resume() {
   mode = 'exhibition';
   footsteps.unlock();
   last = performance.now();
-  requestAnimationFrame(frame);
+  cancelAnimationFrame(raf);
+  raf = requestAnimationFrame(frame);
 }
 
 function doPause() {
@@ -294,5 +305,5 @@ function frame(now: number) {
   exhibits.update(player.position);
   footsteps.update(player.stride);
   renderTimed(world, dt);
-  requestAnimationFrame(frame);
+  raf = requestAnimationFrame(frame);
 }
