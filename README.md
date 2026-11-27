@@ -37,7 +37,7 @@ frame is rendered behind the menu, so entering the room doesn't stutter.
 
 **Rendering.** All geometry is merged per material, so the whole hall is only a handful of draw
 calls. The materials are three's `MeshStandardMaterial`, patched to behave like Unity's Standard
-shader (see [Rendering notes](#rendering-notes)). Three directional suns cast shadows. The scene is
+shader (gamma colour space, square-rooted specular; see the comments in `src/world.ts`). Three directional suns cast shadows. The scene is
 static, so their 2048² shadow maps are rendered once at load and never again, and shadows fade out
 40 units from the camera.
 
@@ -79,59 +79,5 @@ overlaps one, that sculpture's tag image is shown; the most recently entered box
 - `src/player.ts`: first-person capsule controller
 - `src/exhibits.ts`: trigger boxes and the sculpture tags
 - `src/footsteps.ts`: stride-based footsteps via Web Audio
-- `public/assets/`: generated web assets, committed so the site builds without Python
-- `tools/`: the pipeline that produced those assets (see [Asset pipeline](#asset-pipeline))
+- `public/assets/`: geometry, textures, UI art and sounds
 
-## Rendering notes
-
-The lighting was tuned against screenshots of the original build taken at known camera poses,
-minimising the per-pixel difference. Columns, left to right: the original, a first untuned render,
-the tuned result. The image predates the brighter ceiling.
-
-![Original vs rebuild](docs/visual-match.jpg)
-
-Several things in `src/world.ts` look odd but are there on purpose:
-
-- **Gamma colour space.** Lighting runs on raw sRGB values, as it did in the original. Textures and
-  colours are never decoded and the output is never encoded.
-- **Square-rooted specular, 0.22 dielectric reflectance.** This is what Unity's Standard shader does
-  in Gamma space, and it gives the sculptures their broad, grey brushed-metal sheen. `BRDF_GGX` is
-  patched to match.
-- **No environment lighting.** The sculptures only catch the suns, never the sky. That is why they
-  read as dark chrome with crisp highlights.
-- **Four dim fill lights as spherical harmonics.** They lift the ceiling and window sills above plain
-  emission grey.
-- **Walls don't block the sun** (`shadowSide = FrontSide`). The walls are single-sided and only the
-  window frames throw shadows into the room.
-- **The ground outside is invisible.** It exists only as collision, so you can't fall off the world.
-- **HUD sizing.** The top bar scales with screen width; the tags and crosshair are a constant size in
-  device pixels.
-
-The ceiling is the one deliberate departure from the original look: it is brighter (emission 0.75
-instead of 0.519) and carries the sculpture reflection.
-
-## Asset pipeline
-
-`public/assets/` is generated from the original Unity WebGL build. You only need to re-run this if
-the source changes. It requires Python 3, Node and ffmpeg.
-
-```bash
-python3 -m venv .cache/venv && .cache/venv/bin/pip install UnityPy numpy pygltflib Pillow texture2ddecoder
-
-# 1. un-gzip the .unityweb files and split the UnityWebData container
-BUILD="path/to/exhibition10/Build"
-mkdir -p .cache/raw .cache/unpacked
-gzip -dc "$BUILD/exhibition10.data.unityweb" > .cache/raw/exhibition10.data
-python3 -I tools/extract/unpack.py .cache/raw/exhibition10.data .cache/unpacked
-
-# 2. scene -> merged glTF + scene.json (player, triggers, lights); textures, UI, audio, cubemap
-.cache/venv/bin/python -I tools/extract/export_scene.py  .cache/unpacked/data.unity3d .cache/extract
-.cache/venv/bin/python -I tools/extract/export_assets.py .cache/unpacked/data.unity3d .cache/extract
-
-# 3. simplify, compress and convert into public/assets
-node tools/build-assets.mjs
-```
-
-`tools/build-assets.mjs` welds and simplifies the sculptures (0.55M triangles), quantizes and
-meshopt-compresses the geometry, converts textures and UI to WebP and the footsteps to MP3.
-`tools/extract/tagmap.json` maps each trigger box to its tag image.
