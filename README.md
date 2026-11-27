@@ -1,81 +1,119 @@
-# DISRUPTIVE TYPE [2020 EXHIBITION] — reboot
+# DISRUPTIVE TYPE [2020 EXHIBITION]
 
-A rebuild of the 2020 Unity WebGL virtual exhibition in **Vite + TypeScript + three.js**, with
-**three-mesh-bvh** for collision. All geometry, textures, UI art, sounds and layout were
-extracted from the original Unity build. Nothing was redrawn by hand.
+A walkable virtual exhibition of "disruptive" type design: a sunlit white hall with 38 brushed-metal
+letterform sculptures. Walk up to a sculpture and its info tag appears, naming the letterform, the
+typeface and its designer.
+
+It runs in the browser on **Vite + TypeScript + three.js**, with **three-mesh-bvh** for collision.
+The exhibition first launched in 2020 as a Unity WebGL build; this version is a rebuild, and all of
+its geometry, textures, UI art, sounds and layout were extracted from that original.
 
 ```bash
 npm install
 npm run dev       # http://localhost:5173
 npm run build     # static site in dist/, deploy anywhere
+npm run preview   # serve the production build locally
 ```
 
-## Why the original was slow, and what changed
+## Controls
 
-| | Unity build (2020) | Reboot |
+| | Desktop | Touch |
 |---|---|---|
-| Download | 116 MB gzipped (134 MB data + 14 MB wasm) | ~5.5 MB |
-| Sculpture triangles | 2.75 M | 0.55 M (meshoptimizer, visually lossless) |
-| Collision triangles | 2.9 M full-res `MeshCollider`s | 150 k (building exact, sculptures simplified) |
-| Shadow maps | 3 realtime shadow-casting suns, re-rendered every frame | same 3 suns, rendered **once** (scene is static) |
-| Draw calls | ~400 renderers | 7 (geometry merged per material) |
-| Menu → room | separate scene load after Start | world preloads while you read the menu |
+| Walk | W A S D or arrow keys | drag on the left half of the screen |
+| Look | mouse (click Start to lock the pointer) | drag on the right half |
+| Sprint | Shift | |
+| Jump | Space | tap on the right half |
+| Pause | Esc | |
 
-What's the same: the 1280×800 menu layout, the info screen, all 38 sculpture triggers and their
-tag images, the top bar, the crosshair, walk 7 / sprint 10 / jump 8, the spawn point, the
-footstep sounds, and the look (white emissive walls, sun-only lighting, brushed-metal sculptures).
+If the browser refuses pointer lock (iframes, embeds, Safari right after Esc), looking falls back to
+click-and-drag.
 
-What's new: touch controls (left drag = walk, right drag = look, tap = jump), adaptive resolution
-(driven by measured GPU time, so a browser's 30 fps cap doesn't blur the room), drag-to-look when the
-browser refuses pointer lock, and a pause menu on Esc.
+## How it works
 
-## Faithfulness notes
+**Loading.** The world starts loading as soon as the page opens, while the visitor reads the menu.
+The room is about 4 MB: meshopt-compressed geometry, WebP textures and a small sky cubemap. Another
+~0.8 MB of tag images is fetched in idle time once the room is ready. Shaders are compiled and one
+frame is rendered behind the menu, so entering the room doesn't stutter.
 
-The look was matched against the running original. Two screenshots of the Unity build were taken
-at known camera poses, the same poses were rendered here, and the error was minimised per pixel.
-Mean error dropped from 26 / 32 to 10 / 18 levels (spawn / sculpture room):
+**Rendering.** All geometry is merged per material, so the whole hall is only a handful of draw
+calls. The materials are three's `MeshStandardMaterial`, patched to behave like Unity's Standard
+shader (see [Rendering notes](#rendering-notes)). Three directional suns cast shadows. The scene is
+static, so their 2048² shadow maps are rendered once at load and never again, and shadows fade out
+40 units from the camera.
+
+**Ceiling reflection.** The ceiling carries a faint, heavily blurred mirror image of the sculptures
+(`src/ceiling.ts`). A planar reflection camera renders only the sculptures, with depth-only copies of
+the walls so sculptures in the next room stay hidden. It renders at quarter resolution and is read
+back from a coarse mipmap, so the sculptures show only as soft patches. While the camera is still,
+the reflection isn't re-rendered.
+
+**Adaptive resolution.** The pixel ratio steps in quarters between 0.75 and the device's ratio
+(capped at 2), according to measured GPU time
+(`EXT_disjoint_timer_query_webgl2`). Where the timer is unavailable, it uses the frame interval.
+Measuring GPU time means a browser capping the frame rate (a background pane, battery saver) doesn't
+blur the room for nothing.
+
+**Movement.** The first-person controller moves a capsule against a BVH of the collision mesh. That
+mesh keeps the building exact and simplifies the sculptures, about 150k triangles in total.
+Sub-stepping at 120 Hz keeps it from tunnelling through walls on slow frames. Head-bob and footsteps
+are driven by distance walked, not time.
+
+**Exhibits.** Each sculpture has an invisible oriented trigger box. While the player's capsule
+overlaps one, that sculpture's tag image is shown; the most recently entered box wins.
+
+## Tuning
+
+| What | Where |
+|---|---|
+| Walk/sprint speed, jump height, gravity, mouse and touch sensitivity, head-bob | `TUNING` in `src/player.ts` |
+| Ceiling reflection: opacity (`STRENGTH`, `GRAZING`), blur (`BLUR_LOD`), resolution | top of `src/ceiling.ts` |
+| Ceiling brightness | `CEILING_GLOW` in `src/world.ts` |
+| Footstep sound set (grass, concrete, carpet), step length, volume | top of `src/footsteps.ts` |
+| Adaptive resolution budgets | `judge()` / `renderTimed()` in `src/main.ts` |
+
+## Project structure
+
+- `src/main.ts`: menu flow, input (mouse, keyboard, touch), adaptive resolution, render loop
+- `src/world.ts`: renderer, materials, sky, lights and shadows, collision BVH
+- `src/ceiling.ts`: the blurred sculpture reflection in the ceiling
+- `src/player.ts`: first-person capsule controller
+- `src/exhibits.ts`: trigger boxes and the sculpture tags
+- `src/footsteps.ts`: stride-based footsteps via Web Audio
+- `public/assets/`: generated web assets, committed so the site builds without Python
+- `tools/`: the pipeline that produced those assets (see [Asset pipeline](#asset-pipeline))
+
+## Rendering notes
+
+The lighting was tuned against screenshots of the original build taken at known camera poses,
+minimising the per-pixel difference. Columns, left to right: the original, a first untuned render,
+the tuned result. The image predates the brighter ceiling.
 
 ![Original vs rebuild](docs/visual-match.jpg)
 
-Things that look odd in the code but reproduce the original on purpose:
+Several things in `src/world.ts` look odd but are there on purpose:
 
-- **Gamma colour space.** The Unity project used Gamma, so lighting ran on raw sRGB values. Textures
-  and colours are never decoded and the output is never encoded.
-- **Square-rooted specular.** Unity's Standard shader does `specularTerm = sqrt(specularTerm)` in
-  Gamma space, and uses 0.22 instead of 0.04 dielectric reflectance. That gives the sculptures their
-  broad, grey brushed-metal sheen. `BRDF_GGX` is patched to do the same.
-- **40-unit shadow distance.** The "High" quality level only drew shadows within 40 units of the
-  camera. Distant walls look sunlit while the floor around you sits in the roof's shadow, and it
-  shifts as you walk. Shadows fade out by view distance.
-- **No environment lighting.** The scene was never baked: the ambient probe is all zeros and the
-  reflection probe is black. The sculptures only catch the suns, never the sky.
-- **Four "baked" fill lights as spherical harmonics.** Without lightmaps, Unity ran its baked lights
-  in realtime. The four dim, upward-pointing ones fell outside the pixel-light budget and went into
-  SH, which is what lifts the ceiling and sills above pure emission grey.
-- **Walls and ceiling don't block the sun from outside** (`shadowSide = FrontSide`). Unity culls back
-  faces in the shadow pass, so the single-sided walls let sunlight through.
-- **The sky is an RGBM-encoded HDR cubemap.** It's decoded with the skybox material's tint and
-  exposure, plus a curve fitted to the original's on-screen colours.
-- **The "Outside" ground plane is invisible.** It used a skybox material, and skybox shaders don't
-  write depth, so the real sky painted over it. It's kept as collision only.
-- **HUD sizes follow Unity's canvas modes.** The top bar scales with screen width. Tags and the
-  crosshair are constant *device* pixels (Unity rendered at device resolution).
-- **Grass footsteps indoors.** No collider had a physic material, so FirstPersonAIO always played its
-  default (grass) set. Concrete and carpet are shipped too; change `SET` in `src/footsteps.ts`.
+- **Gamma colour space.** Lighting runs on raw sRGB values, as it did in the original. Textures and
+  colours are never decoded and the output is never encoded.
+- **Square-rooted specular, 0.22 dielectric reflectance.** This is what Unity's Standard shader does
+  in Gamma space, and it gives the sculptures their broad, grey brushed-metal sheen. `BRDF_GGX` is
+  patched to match.
+- **No environment lighting.** The sculptures only catch the suns, never the sky. That is why they
+  read as dark chrome with crisp highlights.
+- **Four dim fill lights as spherical harmonics.** They lift the ceiling and window sills above plain
+  emission grey.
+- **Walls don't block the sun** (`shadowSide = FrontSide`). The walls are single-sided and only the
+  window frames throw shadows into the room.
+- **The ground outside is invisible.** It exists only as collision, so you can't fall off the world.
+- **HUD sizing.** The top bar scales with screen width; the tags and crosshair are a constant size in
+  device pixels.
 
-## Code map
+The ceiling is the one deliberate departure from the original look: it is brighter (emission 0.75
+instead of 0.519) and carries the sculpture reflection.
 
-- `src/world.ts`: renderer, materials (recreated from the Unity Standard shader values), sky,
-  lights, collision BVH
-- `src/player.ts`: first-person capsule controller (FirstPersonAIO tuning)
-- `src/exhibits.ts`: port of `UIAppear`, showing a tag while you stand in a sculpture's trigger box
-- `src/footsteps.ts`: stride-based footsteps via Web Audio
-- `src/main.ts`: menu flow, input (mouse, keyboard, touch), render loop
-- `public/assets/`: generated web assets (committed so the site builds without Python)
+## Asset pipeline
 
-## Re-running the extraction
-
-Only needed if the source build changes. Requires Python 3 and Node.
+`public/assets/` is generated from the original Unity WebGL build. You only need to re-run this if
+the source changes. It requires Python 3, Node and ffmpeg.
 
 ```bash
 python3 -m venv .cache/venv && .cache/venv/bin/pip install UnityPy numpy pygltflib Pillow texture2ddecoder
@@ -94,5 +132,6 @@ python3 -I tools/extract/unpack.py .cache/raw/exhibition10.data .cache/unpacked
 node tools/build-assets.mjs
 ```
 
-`tools/extract/tagmap.json` maps each trigger to its tag sprite. It was resolved from the
-`UIAppear.customImage` references in the serialized scene data.
+`tools/build-assets.mjs` welds and simplifies the sculptures (0.55M triangles), quantizes and
+meshopt-compresses the geometry, converts textures and UI to WebP and the footsteps to MP3.
+`tools/extract/tagmap.json` maps each trigger box to its tag image.
